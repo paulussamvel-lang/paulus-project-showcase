@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="大字提词器">
+<title>大字提词器</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    height: 100vh;
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: #0a0a0a;
+    color: #fff;
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  #topbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 20px;
+    background: #141414;
+    border-bottom: 1px solid #333;
+    flex-shrink: 0;
+  }
+  #topbar .title { margin-right: auto; font-size: 16px; color: #aaa; }
+  .btn {
+    min-height: 44px;
+    padding: 8px 18px;
+    border: 1px solid #555;
+    border-radius: 8px;
+    background: transparent;
+    color: #ccc;
+    font: inherit;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  .btn:hover { color: #fff; border-color: #888; }
+  .btn-primary { background: #2563eb; border-color: #2563eb; color: #fff; }
+  .btn-primary:hover { background: #1d4ed8; border-color: #1d4ed8; }
+  :focus-visible { outline: 2px solid #60a5fa; outline-offset: 3px; }
+  [hidden] { display: none !important; }
+  #editor-panel {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    padding: 20px;
+    gap: 12px;
+  }
+  #editor-panel label { font-size: 16px; color: #aaa; line-height: 1.5; }
+  #script-input {
+    flex: 1;
+    min-height: 0;
+    padding: 16px;
+    border: 1px solid #555;
+    border-radius: 10px;
+    background: #1a1a1a;
+    color: #fff;
+    font: inherit;
+    font-size: 18px;
+    line-height: 1.8;
+    resize: none;
+  }
+  #script-input::placeholder { color: #999; }
+  #editor-actions { display: flex; gap: 10px; }
+  #prompt-panel {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-anchor: none;
+    overscroll-behavior-y: contain;
+    touch-action: pan-y pinch-zoom;
+    padding: 28px 24px 48px;
+  }
+  #script-display {
+    max-width: 12em;
+    margin-inline: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    line-break: strict;
+    font-size: 48px;
+    font-weight: 600;
+    line-height: 1.65;
+  }
+  @media (max-width: 560px) {
+    #topbar { padding: 8px 12px; gap: 8px; }
+    #editor-panel { padding: 12px; }
+    #prompt-panel { padding: 20px 16px 32px; }
+    #script-display { font-size: min(32px, calc((100vw - 32px) / 12)); }
+  }
+</style>
+</head>
+<body>
+<div id="topbar">
+  <span class="title">大字提词器</span>
+  <button class="btn" id="btn-edit" type="button" onclick="showEditor()" hidden>编辑文稿</button>
+  <button class="btn btn-primary" id="btn-start" type="submit" form="editor-panel">放大阅读</button>
+</div>
+<form id="editor-panel">
+  <label for="script-input">粘贴文稿，按标点一句一行，超过 10 个字再切分。上下拖动阅读。</label>
+  <textarea id="script-input" placeholder="在这里粘贴文稿…" required></textarea>
+  <div id="editor-actions">
+    <button class="btn" id="btn-cancel" type="button" onclick="hideEditor()" hidden>返回阅读</button>
+  </div>
+</form>
+<main id="prompt-panel" aria-label="大字文稿" tabindex="0" hidden>
+  <div id="script-display"></div>
+</main>
+<script>
+const editorPanel = document.getElementById('editor-panel');
+const promptPanel = document.getElementById('prompt-panel');
+const scriptInput = document.getElementById('script-input');
+const scriptDisplay = document.getElementById('script-display');
+const startButton = document.getElementById('btn-start');
+const editButton = document.getElementById('btn-edit');
+const cancelButton = document.getElementById('btn-cancel');
+let readingPosition = 0;
+const characterSegmenter = typeof Intl.Segmenter === 'function'
+  ? new Intl.Segmenter('zh', { granularity: 'grapheme' })
+  : null;
+const closingPunctuation = /^[\p{Pe}\p{Pf}，。！？；：、,.!?;:…%％‰—\-"']$/u;
+const sentencePunctuation = /(?:--+|—+|…+|[，。；！？：、,.!?;:])+[\p{Pe}\p{Pf}"']*/gu;
+
+function wrapScript(raw) {
+  return raw.split(/\r\n?|\n/).map(paragraph => {
+    const sentences = [];
+    let start = 0;
+    for (const match of paragraph.matchAll(sentencePunctuation)) {
+      // Decimal points and time separators stay inside their numbers.
+      if (/^[.:]$/.test(match[0])
+        && /\d/.test(paragraph[match.index - 1] || '')
+        && /\d/.test(paragraph[match.index + 1] || '')) continue;
+      const end = match.index + match[0].length;
+      sentences.push(paragraph.slice(start, end));
+      start = end;
+    }
+    sentences.push(paragraph.slice(start));
+    return sentences.filter(sentence => sentence.trim()).flatMap(wrapSentence).join('\n');
+  }).join('\n');
+}
+
+function wrapSentence(sentence) {
+  const characters = characterSegmenter
+    ? Array.from(characterSegmenter.segment(sentence), item => item.segment)
+    : Array.from(sentence);
+  const lines = [];
+  let start = 0;
+  while (start < characters.length) {
+    let end = Math.min(start + 10, characters.length);
+    // Keep closing punctuation with the text before it, including at the end.
+    while (end < characters.length && closingPunctuation.test(characters[end])) end++;
+    lines.push(characters.slice(start, end).join(''));
+    start = end;
+  }
+  return lines;
+}
+
+function showEditor() {
+  readingPosition = promptPanel.scrollTop;
+  promptPanel.hidden = true;
+  editorPanel.hidden = false;
+  startButton.hidden = false;
+  editButton.hidden = true;
+  cancelButton.hidden = !scriptDisplay.textContent;
+}
+
+function hideEditor() {
+  if (!scriptDisplay.textContent) return;
+  editorPanel.hidden = true;
+  promptPanel.hidden = false;
+  startButton.hidden = true;
+  editButton.hidden = false;
+  promptPanel.scrollTop = readingPosition;
+  promptPanel.focus({ preventScroll: true });
+}
+
+editorPanel.addEventListener('submit', (event) => {
+  event.preventDefault();
+  if (!scriptInput.value.trim()) {
+    scriptInput.focus();
+    return;
+  }
+  scriptDisplay.textContent = wrapScript(scriptInput.value);
+  readingPosition = 0;
+  hideEditor();
+});
+</script>
+</body>
+</html>
