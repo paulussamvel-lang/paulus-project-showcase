@@ -1,0 +1,2 @@
+All rights reserved for original showcase additions.
+Third-party and previously open-source components retain their own licenses. See THIRD_PARTY_NOTICES.md.

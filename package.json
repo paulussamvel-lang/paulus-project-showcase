@@ -1,0 +1,12 @@
+{
+  "name": "paulus-project-showcase",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Private interview showcase with embedded tool demonstrations",
+  "scripts": {
+    "start": "node server.cjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
